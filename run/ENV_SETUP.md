@@ -144,9 +144,9 @@ az extension list -o table   # 確認列表中有 azure-devops
 ## 2. 啟動方式
 執行以下指令:
 ```cmd=
-export AZURE_OPENAI_API_KEY='Coiz*******************************************************RQc'
+export AZURE_OPENAI_API_KEY='eeee'
 cd ~/workspace
-codex --yolo
+codex --yolo "請根據專案底下的 SKILL.md 流程，開始進行AI自動化修補CVEs漏洞。"
 ```
 
 在 codex Prompt 裡，輸入
