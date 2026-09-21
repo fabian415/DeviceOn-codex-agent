@@ -144,7 +144,7 @@ az extension list -o table   # 確認列表中有 azure-devops
 ## 2. 啟動方式
 執行以下指令:
 ```cmd=
-export AZURE_OPENAI_API_KEY='CoizYVLUPDCvnT3qOe62YVN3NJGKIvDX8Ig2z7GmDhV3604jGkVkJQQJ99CEACqBBLyXJ3w3AAAAACOG7RQc'
+export AZURE_OPENAI_API_KEY='Coiz*******************************************************RQc'
 cd ~/workspace
 codex --yolo
 ```
