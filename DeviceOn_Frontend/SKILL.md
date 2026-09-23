@@ -43,10 +43,11 @@ set +a
 
 ```sh
 cd ~/workspace/DeviceOn_Frontend
-./cve-loop.sh start-round     # 開新一輪:對齊 last-good,重建 nightly-build
-./cve-loop.sh trigger-build   # push nightly-build → 觸發 pipeline → 等待 → 判讀結果
-./cve-loop.sh status          # 查目前輪數/嘗試次數,唯讀、不做任何變更
-./cve-loop.sh report          # 彙整成 Excel 報表,只在整體流程真正停止時呼叫一次
+./cve-loop.sh start-round       # 開新一輪:對齊 last-good,重建 nightly-build
+./cve-loop.sh trigger-build     # push nightly-build → 觸發 pipeline → 等待 → 判讀結果
+./cve-loop.sh status            # 查目前輪數/嘗試次數,唯讀、不做任何變更
+./cve-loop.sh report            # 彙整成 Excel 報表,只在整體流程真正停止時呼叫一次
+./cve-loop.sh cleanup-branches  # 補呼叫:report 印出 branch_cleanup=SKIPPED 時,之後拿來重試分支清理
 ```
 
 每個指令最後一行永遠會印出 `RESULT=<狀態> key=value ...` 這種格式,照這個表格分派下一步:
@@ -59,7 +60,7 @@ cd ~/workspace/DeviceOn_Frontend
 | `BUILD_OK_NO_TRIVY_REPORT` | 0 | 編譯成功但找不到預期的 Trivy 報告檔(artifact 結構可能變了) | **這是流程的停止點,不要自動繼續修補 CVE、也不要呼叫 `report`**(資料不完整)。用 `find "<artifacts_dir>" -type f` 列出實際檔案,整理出你觀察到的落差,回報使用者,等待人工確認 artifact 結構或更新 `cve-loop.sh` 後再繼續(細節見「常見問題」) |
 | `BUILD_FAILED` | 2 | 這一輪還沒超過重試上限;附 `log` 路徑 | 讀 `log`,判斷根因(不限於改版號,必要時直接改程式碼,見「修補建置失敗」),commit,再呼叫 `trigger-build`(**不要**呼叫 `start-round`,那會把你剛剛的修補丟掉) |
 | `BUILD_FAILED_GIVE_UP` | 3 | 同一輪重試已達 `CVE_LOOP_MAX_BUILD_ATTEMPTS`(預設 3)次,已自動回退到 `last-good`(這一輪的修補全部作廢) | **不是整體流程的停止點**,只代表這一輪用掉的 3 次嘗試都沒找到能編譯的做法。回報使用者這一輪試過什麼、卡在哪,然後回到外層呼叫 `start-round` 開新一輪,換更根本的做法再試,直到真的收到 `MAX_ROUNDS_REACHED` 才停止 |
-| `REPORT_GENERATED` | 0 | 報表與 PR 已自動處理完畢;附 `path`、`pr_result`、`pr_id`、`pr_url`、`branch_cleanup` | 見「產出報表」一節 |
+| `REPORT_GENERATED` | 0 | 報表與 PR 已自動處理完畢;無論這個 session 有沒有修復過任何 CVE,都會接著嘗試清理 `last-good`/`nightly-build` 分支;附 `path`、`pr_result`、`pr_id`、`pr_url`、`branch_cleanup` | 見「產出報表」一節 |
 
 `reason=PIPELINE_INFRA_ERROR`(可能出現在 `BUILD_FAILED`/`BUILD_FAILED_GIVE_UP`)代表觸發/等待 pipeline 的過程本身沒能正常跑完(觸發失敗、等待逾時等),不一定是程式碼問題,先看 `log` 判斷是否為基礎設施問題(PAT 失效、pipeline 名稱錯、網路逾時),這種情況修 `package.json` 沒有用,應該直接回報使用者。
 
@@ -236,26 +237,47 @@ cd ~/workspace/DeviceOn_Frontend
 
 1. 把 xlsx 用 Pull Request Attachments API 上傳、把下載連結補進描述最後一段。**這一步一定排在核准/auto-complete 之前**:PR 一旦被 auto-complete 合併完成,Azure DevOps 就不允許再編輯它的描述(`TF401181`),太晚補連結會靜默失敗,附件雖然上傳成功但 PR 頁面上看不到連結。
 2. 用 `az repos pr set-vote --vote approve` 對這個 PR 投下核准票,再用 `az repos pr update --auto-complete true` 開啟 auto-complete——只要 `${MAIN_BRANCH}` 的分支政策(若有設定,例如 build 驗證)通過,PR 就會在**沒有人工介入**的情況下自動合併進 `${MAIN_BRANCH}`。
-3. 輪詢最多 60 秒(每 5 秒查一次 PR 狀態),確認 PR 真的變成 `completed`(即已合併)。真的合併完成後,**自動刪除遠端 `last-good`、`nightly-build` 分支**——這兩個分支的任務到合併進 `${MAIN_BRANCH}` 就結束了,留著只會讓下一個 session 誤用到舊的 base。下次呼叫 `start-round` 時,`ensure_last_good` 找不到 `origin/last-good` 會自動從當下最新的 `origin/${MAIN_BRANCH}` 重新建立,`nightly-build` 也會在 `trigger-build` 時重新 force-push,不需要任何手動處理。60 秒內沒等到 `completed`(通常代表分支政策還在跑,或核准/auto-complete 失敗)則不刪分支。
 
-沒有領先 `${MAIN_BRANCH}` 則整段(建 PR、核准、auto-complete、刪分支)都不會做。
+沒有領先 `${MAIN_BRANCH}` 則這段(建 PR、核准、auto-complete)不會做,直接進下一步。
 
-核准、開啟 auto-complete、刪分支這幾步失敗時只會印警告,**不會**影響 `pr_result`(因為 PR 本身已經建立/更新成功)。核准最常見的失敗原因是 Azure DevOps 分支政策開了「不可核准自己送出的變更」,而 `.env` 裡的 PAT 對應的帳號正好就是建立這個 PR 的人——這種情況下核准票會被拒絕,PR 會停在等待人工核准的狀態,自然也就不會被合併、不會刪分支。
+核准、開啟 auto-complete 這兩步失敗時只會印警告,**不會**影響 `pr_result`(因為 PR 本身已經建立/更新成功)。核准最常見的失敗原因是 Azure DevOps 分支政策開了「不可核准自己送出的變更」,而 `.env` 裡的 PAT 對應的帳號正好就是建立這個 PR 的人——這種情況下核准票會被拒絕,PR 會停在等待人工核准的狀態,自然也就不會被合併。
 
-這整段是純機械式操作,收在 `report` 指令裡自動做。**你不需要、也不應該自己呼叫 `az repos pr create`/`update`/`set-vote`、用 `curl` 打 attachments API、手動組 PR 描述,或自己跑 `git push origin --delete`**。你只需要讀 `pr_result` 和 `branch_cleanup`:
+### 清理 `last-good`、`nightly-build` 分支(**無論有沒有修復過任何 CVE,整個流程結束前都會做**)
+
+上面的 PR 處理做完之後,`report` 會接著呼叫 `attempt_branch_cleanup()`,這一步**不看這個 session 有沒有修復過任何 CVE**(`fixable` 從頭到尾是 0、或整個 session 根本沒有任何 `BUILD_OK`,都一樣會做),機械式判斷這兩個分支能不能刪:
+
+- `origin/last-good` 沒有領先 `origin/${MAIN_BRANCH}`(不管是從頭到尾都沒東西可修、還是修完剛好跟 main 打平)→ **直接刪**,沒有風險。
+- `origin/last-good` 領先 `${MAIN_BRANCH}`、且對應的 `last-good → ${MAIN_BRANCH}` PR 狀態已經是 `completed`(真的合併了)→ **刪**。
+- `origin/last-good` 領先 `${MAIN_BRANCH}`、但 PR 還是 `active`(核准/auto-complete 失敗、或分支政策還在跑,還沒真的合併)→ **不刪**,避免砍掉一份還沒真正併進 main 的修補成果。
+- `origin/last-good` 領先 `${MAIN_BRANCH}`、卻完全找不到對應的 PR(例如建 PR 那步本身就失敗)→ **不刪**,需要人工確認。
+
+刪除成功後,下次呼叫 `start-round` 時,`ensure_last_good` 找不到 `origin/last-good` 會自動從當下最新的 `origin/${MAIN_BRANCH}` 重新建立,`nightly-build` 也會在 `trigger-build` 時重新 force-push,不需要任何手動處理。
+
+這整段(PR 建立/核准/auto-complete、分支清理判斷)是純機械式操作,收在 `report`(以及補呼叫用的 `cleanup-branches`)指令裡自動做。**你不需要、也不應該自己呼叫 `az repos pr create`/`update`/`set-vote`、用 `curl` 打 attachments API、手動組 PR 描述,或自己跑 `git push origin --delete`**。你只需要讀 `pr_result` 和 `branch_cleanup`:
 
 | `pr_result` | 意義 | 你該做什麼 |
 |---|---|---|
 | `PR_CREATED` | 已建立新 PR,並嘗試自動核准 + 開啟 auto-complete | 把 `pr_url` 告知使用者;若腳本印出核准或 auto-complete 失敗的警告,一併告知使用者這個 PR 可能還停在待人工核准的狀態 |
 | `PR_UPDATED` | 已有 active PR,更新了描述與附件,並重新嘗試自動核准 + 開啟 auto-complete | 同上,把 `pr_url` 告知使用者 |
-| `PR_SKIPPED_NO_CHANGES` | `last-good` 沒有領先 `${MAIN_BRANCH}`,不需要開 PR | 照常告知使用者報表路徑即可,不用提 PR、也不用提分支清理 |
-| `PR_FAILED` | 建立/更新 PR 或上傳附件失敗(權限不足、API 逾時等) | 告知使用者自動建立 PR 失敗,需要手動到 Azure DevOps 開一個 `last-good → ${MAIN_BRANCH}` 的 PR 並附上 `path` 指向的 xlsx;不要自己嘗試用 `az repos`/`curl` 補救,先如實回報即可 |
+| `PR_SKIPPED_NO_CHANGES` | `last-good` 沒有領先 `${MAIN_BRANCH}`,不需要開 PR | 照常告知使用者報表路徑即可;分支清理仍會照常執行(見上),用 `branch_cleanup` 判斷結果即可 |
+| `PR_FAILED` | 建立/更新 PR 或上傳附件失敗(權限不足、API 逾時等) | 告知使用者自動建立 PR 失敗,需要手動到 Azure DevOps 開一個 `last-good → ${MAIN_BRANCH}` 的 PR 並附上 `path` 指向的 xlsx;不要自己嘗試用 `az repos`/`curl` 補救,先如實回報即可(這種情況下 `branch_cleanup` 一定不會是 `DELETED`,因為找不到 PR 可以確認合併狀態) |
 
 | `branch_cleanup` | 意義 | 你該做什麼 |
 |---|---|---|
-| `DELETED` | PR 已確認合併完成,遠端 `last-good`、`nightly-build` 都刪除成功 | 照常告知使用者即可,不用特別提醒 |
-| `FAILED` | PR 已合併完成,但刪其中至少一個遠端分支失敗 | 告知使用者哪個分支沒刪成功(看 stderr 警告),需要時手動 `git push origin --delete <branch>` |
-| `SKIPPED` | `last-good` 沒有領先(沒開 PR),或 PR 60 秒內還沒變成 `completed`(核准/auto-complete 失敗,或分支政策還在跑) | 對照 `pr_result` 判斷原因:`PR_SKIPPED_NO_CHANGES` 就是正常情況;若 `pr_result` 是 `PR_CREATED`/`PR_UPDATED` 卻仍是 `SKIPPED`,代表 PR 還沒真的合併,告知使用者 PR 可能還停在待核准/待政策通過,分支先保留 |
+| `DELETED` | 遠端 `last-good`、`nightly-build` 都刪除成功(不管這個 session 有沒有修復過 CVE) | 照常告知使用者即可,不用特別提醒 |
+| `FAILED` | 依判斷本來應該刪,但刪其中至少一個遠端分支的 git 指令失敗 | 告知使用者哪個分支沒刪成功(看 stderr 警告),需要時手動 `git push origin --delete <branch>` |
+| `NOTHING_TO_CLEAN` | `origin/last-good` 根本不存在(可能已經被清過) | 照常告知使用者即可,不用特別提醒 |
+| `SKIPPED` | `last-good` 領先 `${MAIN_BRANCH}`,但對應 PR 還是 `active`(還沒真的合併) | 告知使用者 PR 可能還停在待核准/待分支政策通過,分支先保留;之後可以呼叫 `./cve-loop.sh cleanup-branches` 重試,不用重跑整個 session |
+| `BLOCKED` | `last-good` 領先 `${MAIN_BRANCH}`,但完全找不到對應的 PR | 告知使用者需要人工確認(可能是 PR 建立失敗、或分支被動過手腳),必要時手動開 PR 或確認後再手動刪分支 |
+
+**`cleanup-branches` 指令**(獨立於 `start-round`/`trigger-build`/`report` 之外,不產報表、不動 PR 內容,只是重跑一次上面「清理分支」那段判斷):`report` 印出 `branch_cleanup=SKIPPED` 或 `BLOCKED` 時,不用重跑整個流程,之後(例如等分支政策的 pipeline 真的跑完、或人工核准了 PR 之後)直接呼叫:
+
+```sh
+cd ~/workspace/DeviceOn_Frontend
+./cve-loop.sh cleanup-branches
+```
+
+會印出 `RESULT=BRANCH_CLEANUP_DONE branch_cleanup=<...>`,照上面同一張表判斷即可。
 
 如果某一輪早於這個 session 自己的 `.cve-loop-history.jsonl` 開始記錄之前就已經跑過(理論上只會發生在 session 內途中不明原因遺失記錄這種罕見情況),`generate-report.py` 會盡量從同個 session 底下的 `pipeline-logs`/`pipeline-artifacts` 回溯 fixable/unfixable 數字,但「變更檔案」「變更行數」這類需要 commit 資訊的欄位會老實標成「回溯資料,無法取得變更明細」,不會用猜的填數字。
 
@@ -282,7 +304,7 @@ cd ~/workspace/DeviceOn_Frontend
 - PAT 只存在 `~/workspace/DeviceOn_Frontend/.env`,絕不印出、絕不寫進任何會被 commit 的檔案(見「前置準備」)。
 - 不要對 `last-good` 做 `git push --force`;`cve-loop.sh` 只用 `--ff-only` merge 推進它。`nightly-build` 是拋棄式分支,被 `--force` push 是預期行為,不用理會。
 - 不要自己手動跑 `git merge`/`git push origin last-good`/建立新一輪的 `nightly-build`,也不要自己建立/刪除 `runs/` 底下的資料夾或動 `.cve-loop-session`——這些都由 `cve-loop.sh` 自動處理(見「檔案總覽」),手動介入會讓輪數/重試次數計數與實際狀態不一致。真的遇到 session 卡住、流程被中斷的情況,用 `./cve-loop.sh new-session` 放棄目前 session(不會動到已產生的資料,只是讓下次 `start-round` 開新的),這不是正常流程的一部分。
-- 不要自己手動呼叫 `az repos pr create`/`update`/`set-vote`、用 `curl` 打 PR attachments API,或自己跑 `git push origin --delete <branch>`(見「產出報表」),只有收到 `pr_result=PR_FAILED` 或 `branch_cleanup=FAILED` 時才需要回報使用者請他們手動處理。
-- **`last-good → ${MAIN_BRANCH}` 的 PR 會被自動核准並開啟 auto-complete,符合分支政策就會自動合併進 `${MAIN_BRANCH}`,不會等人工 review;確認合併完成後還會自動刪掉遠端 `last-good`、`nightly-build` 分支**(見「產出報表」)。這是刻意設計的行為,不是 bug;如果之後需要改回「只開 PR、等人工核准」或「不要自動刪分支」,要改的是 `cve-loop.sh` 的 `sync_last_good_pr()`,不要在這裡用其他方式繞過。
+- 不要自己手動呼叫 `az repos pr create`/`update`/`set-vote`、用 `curl` 打 PR attachments API,或自己跑 `git push origin --delete <branch>`(見「產出報表」),只有收到 `pr_result=PR_FAILED`、`branch_cleanup=FAILED` 或 `branch_cleanup=BLOCKED` 時才需要回報使用者請他們手動處理。
+- **`last-good → ${MAIN_BRANCH}` 的 PR 會被自動核准並開啟 auto-complete,符合分支政策就會自動合併進 `${MAIN_BRANCH}`,不會等人工 review。無論這個 session 有沒有修復過任何 CVE,`report`(以及補呼叫用的 `cleanup-branches`)在整體流程結束前都會嘗試清理遠端 `last-good`、`nightly-build` 分支**(見「產出報表」)。這是刻意設計的行為,不是 bug;真正會不會刪由 `attempt_branch_cleanup()` 的安全判斷決定(領先 main 又沒有已合併的 PR 就不會刪,見「清理分支」一節),不是不分青紅皂白地砍。如果之後需要改回「只開 PR、等人工核准」或「不要自動刪分支」,要改的是 `cve-loop.sh` 的 `sync_last_good_pr()`/`attempt_branch_cleanup()`,不要在這裡用其他方式繞過。
 - 版號政策見「修補 CVE」;修建置失敗需要改程式碼配合新版 API 時,只改到能相容、能編譯為止,不順便重構無關的地方。不要用 `--legacy-peer-deps`/`--force` 之類的旗標「假裝」相依衝突已解決。
 - **「能編譯」「建置成功」不等於「修好了」**,細節與處理方式見「修補建置失敗」一節——不能為了讓 pipeline 跑成功就把原本邏輯換成丟例外、回傳空結果或吞掉錯誤,那只是把「建置失敗」換成「功能悄悄壞掉」,而且更難被發現。
