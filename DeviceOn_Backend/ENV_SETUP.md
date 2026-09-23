@@ -141,6 +141,38 @@ az extension list -o table   # 確認列表中有 azure-devops
 > 認證（不需要 `az login`），`run-pipeline.sh` 會在執行時自動從 `.env` 的
 > `AZURE_DEVOPS_PAT` 匯出這個變數，不需要另外手動 `az login`。
 
+### 1.7 註冊 Azure Pipeline
+
+`.env` 裡的 `AZURE_PIPELINE_NAME` 對應的是 Azure DevOps 上「Pipeline 定義」
+的名稱，不是 YAML 檔本身的內容，需要先在 Azure DevOps 建立一次。若 pipeline
+尚未建立，可用 `az pipelines create` 指定名稱與 YAML 路徑一次建好：
+
+```sh
+set -a
+source ~/workspace/DeviceOn_Frontend/.env
+set +a
+export AZURE_DEVOPS_EXT_PAT="$AZURE_DEVOPS_PAT"
+
+az pipelines create \
+  --name "DeviceOn-Backend-CVE-Loop" \
+  --organization "https://dev.azure.com/wise-deviceon" \
+  --project "Sandbox" \
+  --repository "fabianTest2" \
+  --repository-type tfsgit \
+  --branch master \
+  --yml-path scripts/devops/azure-pipelines/gradle-build-and-trivy-scan.yml \
+  --skip-first-run true
+```
+
+建立完成後，把 `--name` 填的值原封不動填進 `.env` 的 `AZURE_PIPELINE_NAME=`：
+
+```sh
+AZURE_PIPELINE_NAME=DeviceOn-Backend-CVE-Loop
+```
+
+`cve-loop.sh` 之後會用這個名稱透過 `az pipelines run --name` 觸發對應的
+pipeline，兩邊名稱必須完全一致。
+
 ## 2. 啟動方式
 執行以下指令:
 ```cmd=

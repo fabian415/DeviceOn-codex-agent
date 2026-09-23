@@ -1,2 +1,18 @@
-run/.env
-run/__pycache__
+# 機密設定，不進版控
+DeviceOn_Frontend/.env
+DeviceOn_Backend/.env
+DeviceOn_Orchestrator/.env
+
+# cve-loop.sh / bridge-dist.sh 執行期產物與快取
+DeviceOn_Frontend/__pycache__
+DeviceOn_Frontend/runs
+DeviceOn_Backend/__pycache__
+DeviceOn_Backend/runs
+DeviceOn_Orchestrator/__pycache__
+DeviceOn_Orchestrator/runs
+
+# Azure DevOps repo clones（各自有獨立的 git 歷史與 remote，不併入這個 repo）
+DeviceOn_Frontend/fabianTest2_Frontend/
+DeviceOn_Backend/fabianTest2/
+Backend/
+WebApp/

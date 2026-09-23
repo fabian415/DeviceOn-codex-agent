@@ -1,0 +1,65 @@
+# DeviceOn Backend CI: pull code -> gradlew 建置 -> Trivy 安全掃描。
+# 使用 Azure Pipelines 原本的 Microsoft-hosted agent（vmImage: ubuntu-22.04）。
+
+trigger:
+  branches:
+    include:
+      - master222
+
+pr: none
+
+pool:
+  vmImage: ubuntu-22.04
+
+variables:
+  GRADLE_OPTS: '-Xmx3072m'
+
+steps:
+
+- checkout: self
+
+- task: Gradle@2
+  displayName: 'Build artifacts for scanning'
+  inputs:
+    gradleWrapperFile: 'gradlew'
+    tasks: 'fatJar explodedWar'
+    publishJUnitResults: false
+    javaHomeOption: 'JDKVersion'
+    jdkVersionOption: '1.17'
+    gradleOptions: '$(GRADLE_OPTS)'
+    sonarQubeRunAnalysis: false
+    spotBugsAnalysis: false
+
+- script: |
+    set -e
+    rm -rf CustomJarDeviceOn && mkdir -p CustomJarDeviceOn
+    cp -v Worker/build/libs/*.jar     CustomJarDeviceOn/
+    cp -v OTAWorker/build/libs/*.jar  CustomJarDeviceOn/
+    cp -v WebApp/build/libs/*.war     CustomJarDeviceOn/
+  displayName: 'Collect build artifacts'
+
+# ---------- Trivy scan built artifacts (json,html,spdxjson) ----------
+# 等價於 `trivy rootfs --scanners vuln ./CustomJarDeviceOn`：task 會把 type
+# 原樣當成 trivy 的 subcommand 傳下去，所以 rootfs 雖然不在 task 編輯器的
+# 下拉選項裡（filesystem/image/repository/sbom），在 YAML 裡仍然可用。
+# 掃描與 SBOM 合併成同一個 task：reports 支援 multi-select，各格式都有自己
+# 的 output 變數；ignoreScanErrors 讓掃到漏洞不會讓 task 判 fail。
+- task: trivy@2
+  name: TrivyScan
+  displayName: 'Trivy scan built artifacts'
+  inputs:
+    version: 'latest'
+    type: 'rootfs'
+    target: '$(Build.SourcesDirectory)/CustomJarDeviceOn'
+    scanners: 'vuln'
+    ignoreScanErrors: true
+    reports: 'json,html,spdxjson'
+    publish: false
+
+- publish: $(TrivyScan.jsonReport)
+  artifact: Trivy-Report
+  condition: succeededOrFailed()
+
+- publish: $(TrivyScan.spdxjsonReport)
+  artifact: deviceon.spdx.json
+  condition: succeededOrFailed()

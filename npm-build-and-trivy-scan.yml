@@ -1,0 +1,62 @@
+# DeviceOn Frontend CI: pull code -> npm install -> npm run build -> Trivy 安全掃描。
+# 使用 Azure Pipelines 原本的 Microsoft-hosted agent（vmImage: ubuntu-22.04）。
+
+trigger:
+  branches:
+    include:
+      - master222
+
+pr: none
+
+pool:
+  vmImage: ubuntu-22.04
+
+variables:
+  NODE_VERSION: '20.9.0'
+
+steps:
+
+- checkout: self
+
+- task: UseNode@1
+  displayName: 'Install Node.js'
+  inputs:
+    version: '$(NODE_VERSION)'
+
+- task: Npm@1
+  displayName: 'npm install'
+  inputs:
+    command: 'install'
+
+- task: Npm@1
+  displayName: 'npm run build'
+  inputs:
+    command: 'custom'
+    customCommand: 'run build'
+  env:
+    NODE_OPTIONS: --max-old-space-size=4096
+
+# ---------- Trivy scan source & build output (json,html,spdxjson) ----------
+# 等價於 `trivy fs --scanners vuln .`：掃描 package.json / package-lock.json
+# 內宣告的 npm 套件與已產生的 dist/，找出已知漏洞（CVE）。掃描與 SBOM 合併成
+# 同一個 task：reports 支援 multi-select，各格式都有自己的 output 變數；
+# ignoreScanErrors 讓掃到漏洞不會讓 task 判 fail。
+- task: trivy@2
+  name: TrivyScan
+  displayName: 'Trivy scan npm dependencies'
+  inputs:
+    version: 'latest'
+    type: 'fs'
+    target: '$(Build.SourcesDirectory)'
+    scanners: 'vuln'
+    ignoreScanErrors: true
+    reports: 'json,html,spdxjson'
+    publish: false
+
+- publish: $(TrivyScan.jsonReport)
+  artifact: Trivy-Report
+  condition: succeededOrFailed()
+
+- publish: $(TrivyScan.spdxjsonReport)
+  artifact: deviceon-frontend.spdx.json
+  condition: succeededOrFailed()
