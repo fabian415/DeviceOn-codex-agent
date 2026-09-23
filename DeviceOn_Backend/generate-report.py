@@ -609,10 +609,10 @@ def main():
     failed_rows = [r for r in rounds_rows if r.get("result") in ("BUILD_FAILED", "BUILD_FAILED_GIVE_UP")]
 
     start_fixable = first_snap[1] if first_snap else None
-    start_fixable_n = sum(1 for v in start_fixable.values() if v["fixed_versions"]) if start_fixable else None
+    start_fixable_n = sum(1 for v in start_fixable.values() if v["fixed_versions"]) if start_fixable is not None else None
     final_snapshot = last_snap[1] if last_snap else None
-    final_fixable_n = sum(1 for v in final_snapshot.values() if v["fixed_versions"]) if final_snapshot else None
-    final_unfixable_n = sum(1 for v in final_snapshot.values() if not v["fixed_versions"]) if final_snapshot else None
+    final_fixable_n = sum(1 for v in final_snapshot.values() if v["fixed_versions"]) if final_snapshot is not None else None
+    final_unfixable_n = sum(1 for v in final_snapshot.values() if not v["fixed_versions"]) if final_snapshot is not None else None
 
     fixed_count = None
     fix_rate = "-"
