@@ -1,11 +1,7 @@
 # DeviceOn Backend CI: pull code -> gradlew 建置 -> Trivy 安全掃描。
 # 使用 Azure Pipelines 原本的 Microsoft-hosted agent（vmImage: ubuntu-22.04）。
 
-trigger:
-  branches:
-    include:
-      - master222
-
+trigger: none
 pr: none
 
 pool:

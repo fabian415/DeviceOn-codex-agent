@@ -160,20 +160,30 @@ export AZURE_DEVOPS_EXT_PAT="$AZURE_DEVOPS_PAT"
 
 az pipelines create \
   --name "DeviceOn-Frontend-CVE-Loop" \
+  --folder-path "\\DeviceOn Release" \
   --organization "https://dev.azure.com/wise-deviceon" \
-  --project "Sandbox" \
-  --repository "fabianTest2_Frontend" \
+  --project "DeviceOn Core" \
+  --repository "WebApp" \
   --repository-type tfsgit \
   --branch master \
   --yml-path AzurePiplines/npm-build-and-trivy-scan.yml \
   --skip-first-run true
 ```
 
+> `--folder-path` 指定 pipeline 要放在哪個資料夾（預設是根目錄 `\`）。資料夾
+> 名稱有空白，所以要加引號；在 bash 的雙引號裡 `\\` 會變成一個 `\`。
+> `az pipelines run --name` 預設會搜尋所有資料夾，所以 `cve-loop.sh` 不用改，
+> 只要專案內沒有其他同名 pipeline 即可。
+
 建立完成後，把 `--name` 填的值原封不動填進 `.env` 的 `AZURE_PIPELINE_NAME=`：
 
 ```sh
 AZURE_PIPELINE_NAME=DeviceOn-Frontend-CVE-Loop
 ```
+
+> 注意：`.env` 是用 `source` 載入的，值有空白時一定要加引號，例如
+> `AZURE_DEVOPS_PROJECT="DeviceOn Core"`。沒加引號的話，bash 會把 `Core`
+> 當成指令執行，變數會是空的。`cve-loop.sh` 組 URL 時會自動把空白編碼成 `%20`。
 
 `cve-loop.sh` 之後會用這個名稱透過 `az pipelines run --name` 觸發對應的
 pipeline，兩邊名稱必須完全一致。

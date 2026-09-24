@@ -149,15 +149,16 @@ az extension list -o table   # 確認列表中有 azure-devops
 
 ```sh
 set -a
-source ~/workspace/DeviceOn_Frontend/.env
+source ~/workspace/DeviceOn_Backend/.env
 set +a
 export AZURE_DEVOPS_EXT_PAT="$AZURE_DEVOPS_PAT"
 
 az pipelines create \
   --name "DeviceOn-Backend-CVE-Loop" \
+  --folder-path "\\DeviceOn Release" \
   --organization "https://dev.azure.com/wise-deviceon" \
-  --project "Sandbox" \
-  --repository "fabianTest2" \
+  --project "DeviceOn Core" \
+  --repository "Backend" \
   --repository-type tfsgit \
   --branch master \
   --yml-path scripts/devops/azure-pipelines/gradle-build-and-trivy-scan.yml \
@@ -169,6 +170,10 @@ az pipelines create \
 ```sh
 AZURE_PIPELINE_NAME=DeviceOn-Backend-CVE-Loop
 ```
+
+> 注意：`.env` 是用 `source` 載入的，值有空白時一定要加引號，例如
+> `AZURE_DEVOPS_PROJECT="DeviceOn Core"`。沒加引號的話，bash 會把 `Core`
+> 當成指令執行，變數會是空的。`cve-loop.sh` 組 URL 時會自動把空白編碼成 `%20`。
 
 `cve-loop.sh` 之後會用這個名稱透過 `az pipelines run --name` 觸發對應的
 pipeline，兩邊名稱必須完全一致。
